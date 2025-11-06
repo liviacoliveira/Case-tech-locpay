@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>API LocPay — Tester</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; background:#fafafa; }
+    .container { max-width: 1000px; margin: 0 auto; background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 10px rgba(0,0,0,0.05); }
+    h1 { margin-top:0; }
+    .row { display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+    input[type="text"], input[type="number"], input[type="email"] { padding:8px; border:1px solid #dcdcdc; border-radius:6px; min-width:160px; }
+    button { padding:8px 12px; border:none; background:#007bff; color:#fff; border-radius:6px; cursor:pointer; }
+    button.secondary { background:#6c757d; }
+    section { margin-bottom:18px; border-top:1px solid #f0f0f0; padding-top:12px; }
+    label { min-width:150px; display:inline-block; font-size:14px; color:#333; }
+    #resultBox { margin-top:18px; border:1px solid #e6eef8; border-radius:8px; overflow:hidden; }
+    #resultHeader { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 16px; background:#f7fbff; }
+    .badge { padding:6px 10px; border-radius:999px; font-weight:600; color:#fff; }
+    .badge.success { background:#198754; }
+    .badge.error { background:#dc3545; }
+    .badge.info { background:#0d6efd; }
+    #resultMeta { color:#555; font-size:13px; }
+    #resultSummary { padding:12px 16px; background:#fff; border-top:1px solid #f0f6ff; color:#222; font-size:14px; }
+    #resultJson { padding:14px; background:#0f1720; color:#e6eef8; font-family:monospace; font-size:13px; white-space:pre-wrap; overflow:auto; max-height:360px; }
+    .controls { display:flex; gap:8px; align-items:center; }
+    .small { padding:6px 8px; font-size:13px; border-radius:6px; }
+    .muted { color:#666; font-size:13px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>LocPay — API Tester</h1>
+
+    <section>
+      <h2>Criar Recebedor</h2>
+      <div class="row">
+        <label>Nome</label>
+        <input type="text" id="receiver_name" placeholder="Ex: João Silva">
+        <label>Email</label>
+        <input type="email" id="receiver_email" placeholder="ex@dominio.com">
+        <button onclick="createReceiver()">Criar</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Criar Operação</h2>
+      <div class="row">
+        <label>Valor bruto (gross_value)</label>
+        <input type="number" id="op_gross" step="0.01" placeholder="100.00">
+        <label>ID do recebedor</label>
+        <input type="number" id="op_receiver_id" placeholder="1">
+        <button onclick="createOperation()">Criar Operação</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Consultar Operação</h2>
+      <div class="row">
+        <label>ID da operação</label>
+        <input type="number" id="op_query_id" placeholder="1">
+        <button onclick="getOperation()">Consultar</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Confirmar Operação</h2>
+      <div class="row">
+        <label>ID da operação</label>
+        <input type="number" id="op_confirm_id" placeholder="1">
+        <button onclick="confirmOperation()">Confirmar</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Consultar Recebedor</h2>
+      <div class="row">
+        <label>ID do recebedor</label>
+        <input type="number" id="receiver_query_id" placeholder="1">
+        <button onclick="getReceiver()">Consultar</button>
+      </div>
+    </section>
+
+    <div id="resultBox">
+      <div id="resultHeader">
+        <div style="display:flex;gap:12px;align-items:center;">
+          <div id="statusBadge" class="badge info">Aguardando</div>
+          <div id="resultMeta" class="muted">Nenhuma requisição ainda</div>
+        </div>
+        <div class="controls">
+          <button class="small secondary" onclick="clearResult()">Limpar</button>
+          <button class="small" onclick="copyResult()">Copiar JSON</button>
+        </div>
+      </div>
+
+      <div id="resultSummary">Resumo de resposta aparecerá aqui.</div>
+      <div id="resultJson">{ "result": "ainda vazio" }</div>
+    </div>
+  </div>
+
+  <script>
+    const statusBadge = document.getElementById('statusBadge');
+    const resultMeta = document.getElementById('resultMeta');
+    const resultSummary = document.getElementById('resultSummary');
+    const resultJson = document.getElementById('resultJson');
+
+    function setBadge(status) {
+      statusBadge.className = 'badge';
+      if (!status) { statusBadge.textContent = 'Aguardando'; statusBadge.classList.add('info'); return; }
+      if (status >= 200 && status < 300) { statusBadge.textContent = 'Sucesso'; statusBadge.classList.add('success'); }
+      else if (status >= 400) { statusBadge.textContent = 'Erro ' + status; statusBadge.classList.add('error'); }
+      else { statusBadge.textContent = 'HTTP ' + status; statusBadge.classList.add('info'); }
+    }
+
+    function summarize(obj) {
+      if (!obj) return 'Resposta vazia';
+      // Receiver summary
+      if (obj.receiver) {
+        const r = obj.receiver;
+        const ops = Array.isArray(obj.operations) ? obj.operations.length : '—';
+        return `Receiver: ${r.name || ('#' + (r.id||'—'))}  •  Balance: ${r.balance ?? '0.00'}  •  Operações: ${ops}`;
+      }
+      // Operation summary
+      if (obj.id && (obj.net_value || obj.gross_value || obj.amount || obj.status)) {
+        const id = obj.id;
+        const gross = obj.gross_value ?? obj.amount ?? '—';
+        const fee = obj.fee ?? '—';
+        const net = obj.net_value ?? '—';
+        const status = obj.status ?? '—';
+        return `Operação #${id}  •  Status: ${status}  •  Bruto: ${gross}  •  Taxa: ${fee}  •  Líquido: ${net}`;
+      }
+      // Generic summary for arrays
+      if (Array.isArray(obj)) return `Array com ${obj.length} itens`;
+      // Fallback: first-level keys
+      if (typeof obj === 'object') return 'Chaves: ' + Object.keys(obj).slice(0,6).join(', ');
+      return String(obj);
+    }
+
+    function formatJson(obj) {
+      try { return JSON.stringify(obj, null, 2); }
+      catch (e) { return String(obj); }
+    }
+
+    function showResult(obj, status, url) {
+      setBadge(status);
+      const time = new Date().toLocaleString();
+      resultMeta.textContent = `${url || ''}  •  ${time}`;
+      resultSummary.textContent = summarize(obj);
+      resultJson.textContent = formatJson(obj);
+    }
+
+    function showError(message, status, url) {
+      setBadge(status || 500);
+      const time = new Date().toLocaleString();
+      resultMeta.textContent = `${url || ''}  •  ${time}`;
+      resultSummary.textContent = message || 'Erro desconhecido';
+      // keep object as readable JSON when possible
+      if (typeof message === 'object') resultJson.textContent = formatJson(message);
+      else resultJson.textContent = message;
+    }
+
+    function clearResult() {
+      setBadge(null);
+      resultMeta.textContent = 'Nenhuma requisição ainda';
+      resultSummary.textContent = 'Resumo de resposta aparecerá aqui.';
+      resultJson.textContent = '{ \"result\": \"ainda vazio\" }';
+    }
+
+    function copyResult() {
+      navigator.clipboard.writeText(resultJson.textContent).then(()=> {
+        alert('JSON copiado para a área de transferência');
+      }).catch(()=> {
+        alert('Falha ao copiar');
+      });
+    }
+
+    async function apiFetch(path, options = {}) {
+      let res, data;
+      try {
+        res = await fetch(path, options);
+        const text = await res.text();
+        try { data = text ? JSON.parse(text) : null; } catch (e) { data = text; }
+        showResult(data, res.status, path);
+        return { res, data };
+      } catch (err) {
+        showError(err.message || String(err), err.status || 500, path);
+        return { res: null, data: null };
+      }
+    }
+
+    // API helper functions
+    async function createReceiver() {
+      const name = document.getElementById('receiver_name').value.trim();
+      const email = document.getElementById('receiver_email').value.trim();
+      if (!name) return showError('name é obrigatório', 400, '/receivers');
+      await apiFetch('/receivers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email })
+      });
+    }
+
+    async function createOperation() {
+      const gross_value = document.getElementById('op_gross').value;
+      const receiver_id = document.getElementById('op_receiver_id').value;
+      if (!gross_value || !receiver_id) return showError('gross_value e receiver_id são obrigatórios', 400, '/operations');
+      await apiFetch('/operations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gross_value, receiver_id })
+      });
+    }
+
+    async function getOperation() {
+      const id = document.getElementById('op_query_id').value;
+      if (!id) return showError('ID da operação é obrigatório', 400, '/operations/:id');
+      await apiFetch(`/operations/${id}`);
+    }
+
+    async function confirmOperation() {
+      const id = document.getElementById('op_confirm_id').value;
+      if (!id) return showError('ID da operação é obrigatório', 400, '/operations/:id/confirm');
+      await apiFetch(`/operations/${id}/confirm`, { method: 'POST' });
+    }
+
+    async function getReceiver() {
+      const id = document.getElementById('receiver_query_id').value;
+      if (!id) return showError('ID do recebedor é obrigatório', 400, '/receivers/:id');
+      await apiFetch(`/receivers/${id}`);
+    }
+
+    // initial clear
+    clearResult();
+  </script>
+</body>
+</html>
